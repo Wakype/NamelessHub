@@ -46,6 +46,7 @@ local States = {
     Noclip = false,
     Fly = false,
     FlySpeed = 50,
+    FOVToggle = false, 
     FOV = 70,
     HitboxExpander = false,
     HitboxSize = 10,
@@ -63,7 +64,10 @@ local States = {
     AimbotSmoothness = 0.3, 
 
     -- Utility
-    ClickTP = false
+    ClickTP = false,
+    
+    -- Script Hub Config
+    AutoReattach = false
 }
 
 local TargetOptions = {"Head", "HumanoidRootPart", "UpperTorso"}
@@ -784,6 +788,28 @@ local function ServerHop()
     end
 end
 
+-- ==========================================
+-- Auto Reattach Logic (Teleport Queueing)
+-- ==========================================
+local function SetupAutoReattach()
+    -- Get the executor's queue on teleport function safely
+    local queue_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or (KRNL_LOADED and krnl.queue_on_teleport)
+    
+    if queue_teleport then
+        Connections.Teleport = LocalPlayer.OnTeleport:Connect(function(teleportState)
+            if States.AutoReattach and (teleportState == Enum.TeleportState.Started or teleportState == Enum.TeleportState.InProgress) then
+                queue_teleport([[
+                    task.wait(1)
+                    loadstring(game:HttpGet("https://raw.githubusercontent.com/Wakype/NamelessHub/main/MinimalHub.lua"))()
+                    warn("MinimalHub: Auto Reattach executed.")
+                ]])
+            end
+        end)
+    end
+end
+
+SetupAutoReattach()
+
 local flyBodyVelocity = nil
 
 Connections.MainLoop = RunService.RenderStepped:Connect(function()
@@ -804,7 +830,15 @@ Connections.MainLoop = RunService.RenderStepped:Connect(function()
         watermarkLabel.Visible = false
     end
 
-    Camera.FieldOfView = States.FOV
+    -- Field of View Changer Logic
+    if States.FOVToggle then
+        Camera.FieldOfView = States.FOV
+    else
+        -- Revert to default FOV if it was previously overridden by the script
+        if Camera.FieldOfView == States.FOV and Camera.FieldOfView ~= 70 then
+            Camera.FieldOfView = 70
+        end
+    end
 
     if States.AimbotDrawFOV then
         FOVCircle.Radius = States.AimbotFOV
@@ -1003,6 +1037,7 @@ tabPlayer.CreateToggle("Safewalk", "Safewalk")
 tabPlayer.CreateSection("Combat & Vision")
 tabPlayer.CreateToggle("Spinbot / Fling", "Spinbot")
 tabPlayer.CreateToggle("Anti-Aim", "AntiAim")
+tabPlayer.CreateToggle("Enable Custom FOV", "FOVToggle") 
 tabPlayer.CreateSlider("Camera FOV", "FOV", 70, 120, false)
 tabPlayer.CreateToggle("Hitbox Expander", "HitboxExpander")
 tabPlayer.CreateSlider("Hitbox Size", "HitboxSize", 5, 30, false)
@@ -1030,6 +1065,8 @@ end)
 
 local tabConfig = createTab("Config")
 tabConfig.CreateSection("Configuration")
+-- Auto Reattach Toggle added below
+tabConfig.CreateToggle("Auto Reattach on Rejoin", "AutoReattach")
 tabConfig.CreateButton("Save Current Settings", Color3.fromRGB(50, 100, 150), SaveConfig)
 tabConfig.CreateButton("Load Saved Settings", Color3.fromRGB(50, 100, 150), LoadConfig)
 
