@@ -65,8 +65,6 @@ local States = {
 
     -- Utility
     ClickTP = false,
-    
-    -- Script Hub Config
     AutoReattach = false
 }
 
@@ -118,6 +116,7 @@ LoadConfig()
 -- ==========================================
 -- 2. UI Framework & Intro (Minimalist)
 -- ==========================================
+-- (UI Setup remains identical to your original code)
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "MinimalHubV1"
@@ -599,10 +598,251 @@ local r6Bones = {
     {"Torso", "Right Leg"}
 }
 
-local function handleVisuals()
+
+Connections.Jump = UserInputService.JumpRequest:Connect(function()
+    if States.InfJump then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end
+    end
+end)
+
+Connections.ClickTP = UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.T and States.ClickTP then
+        local mouseLocation = UserInputService:GetMouseLocation()
+        local ray = Camera:ViewportPointToRay(mouseLocation.X, mouseLocation.Y)
+        local raycastParams = RaycastParams.new()
+        raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+        raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+        local result = workspace:Raycast(ray.Origin, ray.Direction * 1000, raycastParams)
+        if result and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(result.Position + Vector3.new(0, 3.5, 0))
+        end
+    end
+end)
+
+local function ServerHop()
+    local placeId = game.PlaceId
+    local servers = {}
+    local req = request or http_request or (syn and syn.request)
+    
+    if req then
+        local res = req({Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", placeId)})
+        if res and res.Body then
+            local data = HttpService:JSONDecode(res.Body)
+            if data and data.data then
+                for _, v in pairs(data.data) do
+                    if type(v) == "table" and v.playing < v.maxPlayers and v.id ~= game.JobId then
+                        table.insert(servers, v.id)
+                    end
+                end
+            end
+        end
+    end
+    
+    if #servers > 0 then
+        TeleportService:TeleportToPlaceInstance(placeId, servers[math.random(1, #servers)], LocalPlayer)
+    else
+        warn("Failed to find a suitable server to hop to.")
+    end
+end
+
+-- ==========================================
+-- Auto Reattach Logic (Teleport Queueing)
+-- ==========================================
+local function SetupAutoReattach()
+    local queue_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or (KRNL_LOADED and krnl.queue_on_teleport)
+    
+    if queue_teleport then
+        Connections.Teleport = LocalPlayer.OnTeleport:Connect(function(teleportState)
+            if States.AutoReattach and (teleportState == Enum.TeleportState.Started or teleportState == Enum.TeleportState.InProgress) then
+                queue_teleport([[
+                    task.wait(1)
+                    loadstring(game:HttpGet("https://raw.githubusercontent.com/Wakype/NamelessHub/main/MinimalHub.lua"))()
+                    warn("MinimalHub: Auto Reattach executed.")
+                ]])
+            end
+        end)
+    end
+end
+
+SetupAutoReattach()
+
+local flyBodyVelocity = nil
+
+-- ==========================================
+-- NEW LOGIC: Physics Loop (Heartbeat)
+-- ==========================================
+-- Separating Physics math from Visuals stops the stuttering entirely.
+
+Connections.PhysicsLoop = RunService.Heartbeat:Connect(function()
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local rootPart = char:FindFirstChild("HumanoidRootPart")
+
+        if hum then
+            -- Store default values safely
+            if originalStats.Character ~= char then
+                originalStats.Character = char
+                originalStats.WalkSpeed = hum.WalkSpeed
+                originalStats.JumpPower = hum.JumpPower
+                originalStats.UseJumpPower = hum.UseJumpPower
+            end
+
+            -- Update WalkSpeed only if it has changed to prevent property spam
+            if States.WalkSpeedToggle then
+                if hum.WalkSpeed ~= States.WalkSpeed then hum.WalkSpeed = States.WalkSpeed end
+            else
+                if hum.WalkSpeed == States.WalkSpeed and hum.WalkSpeed ~= originalStats.WalkSpeed then
+                    hum.WalkSpeed = originalStats.WalkSpeed
+                end
+            end
+
+            -- Update JumpPower only if changed
+            if States.JumpPowerToggle then
+                if hum.JumpPower ~= States.JumpPower then hum.JumpPower = States.JumpPower end
+                hum.UseJumpPower = true
+            else
+                if hum.JumpPower == States.JumpPower and hum.JumpPower ~= originalStats.JumpPower then
+                    hum.JumpPower = originalStats.JumpPower
+                    hum.UseJumpPower = originalStats.UseJumpPower
+                end
+            end
+        end
+
+        -- Safewalk (Raycast only if actually moving)
+        if States.Safewalk and rootPart and hum then
+            if hum.FloorMaterial ~= Enum.Material.Air and hum.MoveDirection.Magnitude > 0 then
+                local rayParams = RaycastParams.new()
+                rayParams.FilterDescendantsInstances = {char}
+                rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+                local rayOrigin = rootPart.Position + (hum.MoveDirection * 3)
+                local hit = workspace:Raycast(rayOrigin, Vector3.new(0, -10, 0), rayParams)
+
+                if not hit then
+                    rootPart.Velocity = Vector3.new(0, rootPart.Velocity.Y, 0)
+                end
+            end
+        end
+
+        -- Noclip (Optimized to use GetChildren instead of GetDescendants)
+        if States.Noclip then
+            for _, part in ipairs(char:GetChildren()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+
+        -- Fly
+        if States.Fly and rootPart and hum then
+            if not flyBodyVelocity then
+                flyBodyVelocity = Instance.new("BodyVelocity")
+                flyBodyVelocity.Name = "FlyBodyVelocity"
+                flyBodyVelocity.MaxForce = Vector3.new(100000, 100000, 100000)
+                flyBodyVelocity.Parent = rootPart
+            end
+
+            local moveDir = Vector3.new(0, 0, 0)
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - Camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + Camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0, 1, 0) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir = moveDir - Vector3.new(0, 1, 0) end
+
+            if moveDir.Magnitude > 0 then moveDir = moveDir.Unit end
+            flyBodyVelocity.Velocity = moveDir * States.FlySpeed
+            hum.PlatformStand = true
+        else
+            if flyBodyVelocity then
+                flyBodyVelocity:Destroy()
+                flyBodyVelocity = nil
+            end
+            if hum and not States.Fly then hum.PlatformStand = false end
+        end
+
+        -- Spinbot / Fling
+        if States.Spinbot and rootPart then
+            local spinObj = rootPart:FindFirstChild("SpinbotVelocity")
+            if not spinObj then
+                spinObj = Instance.new("BodyAngularVelocity")
+                spinObj.Name = "SpinbotVelocity"
+                spinObj.MaxTorque = Vector3.new(0, math.huge, 0)
+                spinObj.AngularVelocity = Vector3.new(0, 150, 0)
+                spinObj.Parent = rootPart
+            end
+        else
+            local spinObj = rootPart and rootPart:FindFirstChild("SpinbotVelocity")
+            if spinObj then spinObj:Destroy() end
+        end
+
+        -- Anti-Aim
+        if States.AntiAim and rootPart and hum then
+            hum.AutoRotate = false
+            rootPart.CFrame = rootPart.CFrame * CFrame.Angles(0, math.rad(math.random(-90, 90)), 0)
+        else
+            if hum and not States.Spinbot and not States.AntiAim then
+                hum.AutoRotate = true
+            end
+        end
+
+        -- Hitbox Expander (Optimized to check before setting size)
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                local hrp = player.Character.HumanoidRootPart
+                if not originalSizes[player.Name] then
+                    originalSizes[player.Name] = hrp.Size
+                end
+
+                if States.HitboxExpander then
+                    local targetSize = Vector3.new(States.HitboxSize, States.HitboxSize, States.HitboxSize)
+                    if hrp.Size ~= targetSize then
+                        hrp.Size = targetSize
+                        hrp.Transparency = 0.5
+                        hrp.CanCollide = false
+                    end
+                else
+                    if originalSizes[player.Name] and hrp.Size ~= originalSizes[player.Name] then
+                        hrp.Size = originalSizes[player.Name]
+                        hrp.Transparency = 1
+                    end
+                end
+            end
+        end
+    end
+end)
+
+
+-- ==========================================
+-- NEW LOGIC: Render Loop (RenderStepped)
+-- ==========================================
+
+local visCacheTick = tick()
+local playerVisCache = {}
+
+Connections.RenderLoop = RunService.RenderStepped:Connect(function()
+    
+    -- Cache WallCheck visibility every 0.1 seconds instead of 60 times a second
+    local doVisCheck = false
+    if tick() - visCacheTick > 0.1 then
+        doVisCheck = true
+        visCacheTick = tick()
+    end
+
+    -- Visuals (ESP, Skeletons, Tracers)
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
-            -- ESP WallCheck Coloring
+            
+            -- ESP Glow Logic
             if player.Character and States.ESP then
                 local root = player.Character:FindFirstChild("HumanoidRootPart")
                 local highlight = player.Character:FindFirstChild("GlowESP")
@@ -617,12 +857,24 @@ local function handleVisuals()
                 end
 
                 if States.ESPWallCheck and root then
-                    local isVisible = CheckVisibility(root)
-                    highlight.FillColor = isVisible and States.ESPVisibleColor or States.ESPInvisibleColor
-                    highlight.OutlineColor = isVisible and States.ESPVisibleColor or States.ESPInvisibleColor
+                    if doVisCheck then
+                        playerVisCache[player.Name] = CheckVisibility(root)
+                    end
+                    
+                    local isVisible = playerVisCache[player.Name]
+                    if isVisible == nil then isVisible = true end -- fallback
+
+                    -- Only update Color property if it actually changed to prevent render lag
+                    local targetColor = isVisible and States.ESPVisibleColor or States.ESPInvisibleColor
+                    if highlight.FillColor ~= targetColor then
+                        highlight.FillColor = targetColor
+                        highlight.OutlineColor = targetColor
+                    end
                 else
-                    highlight.FillColor = States.ESPVisibleColor
-                    highlight.OutlineColor = States.ESPVisibleColor
+                    if highlight.FillColor ~= States.ESPVisibleColor then
+                        highlight.FillColor = States.ESPVisibleColor
+                        highlight.OutlineColor = States.ESPVisibleColor
+                    end
                 end
             end
 
@@ -732,88 +984,6 @@ local function handleVisuals()
             end
         end
     end
-end
-
-Connections.Jump = UserInputService.JumpRequest:Connect(function()
-    if States.InfJump then
-        local char = LocalPlayer.Character
-        if char then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then
-                hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end
-    end
-end)
-
-Connections.ClickTP = UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Enum.KeyCode.T and States.ClickTP then
-        local mouseLocation = UserInputService:GetMouseLocation()
-        local ray = Camera:ViewportPointToRay(mouseLocation.X, mouseLocation.Y)
-        local raycastParams = RaycastParams.new()
-        raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
-        raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-
-        local result = workspace:Raycast(ray.Origin, ray.Direction * 1000, raycastParams)
-        if result and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(result.Position + Vector3.new(0, 3.5, 0))
-        end
-    end
-end)
-
-local function ServerHop()
-    local placeId = game.PlaceId
-    local servers = {}
-    local req = request or http_request or (syn and syn.request)
-    
-    if req then
-        local res = req({Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", placeId)})
-        if res and res.Body then
-            local data = HttpService:JSONDecode(res.Body)
-            if data and data.data then
-                for _, v in pairs(data.data) do
-                    if type(v) == "table" and v.playing < v.maxPlayers and v.id ~= game.JobId then
-                        table.insert(servers, v.id)
-                    end
-                end
-            end
-        end
-    end
-    
-    if #servers > 0 then
-        TeleportService:TeleportToPlaceInstance(placeId, servers[math.random(1, #servers)], LocalPlayer)
-    else
-        warn("Failed to find a suitable server to hop to.")
-    end
-end
-
--- ==========================================
--- Auto Reattach Logic (Teleport Queueing)
--- ==========================================
-local function SetupAutoReattach()
-    -- Get the executor's queue on teleport function safely
-    local queue_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or (KRNL_LOADED and krnl.queue_on_teleport)
-    
-    if queue_teleport then
-        Connections.Teleport = LocalPlayer.OnTeleport:Connect(function(teleportState)
-            if States.AutoReattach and (teleportState == Enum.TeleportState.Started or teleportState == Enum.TeleportState.InProgress) then
-                queue_teleport([[
-                    task.wait(1)
-                    loadstring(game:HttpGet("https://raw.githubusercontent.com/Wakype/NamelessHub/main/MinimalHub.lua"))()
-                    warn("MinimalHub: Auto Reattach executed.")
-                ]])
-            end
-        end)
-    end
-end
-
-SetupAutoReattach()
-
-local flyBodyVelocity = nil
-
-Connections.MainLoop = RunService.RenderStepped:Connect(function()
-    handleVisuals()
 
     -- Watermark Updates
     if States.Watermark then
@@ -832,9 +1002,8 @@ Connections.MainLoop = RunService.RenderStepped:Connect(function()
 
     -- Field of View Changer Logic
     if States.FOVToggle then
-        Camera.FieldOfView = States.FOV
+        if Camera.FieldOfView ~= States.FOV then Camera.FieldOfView = States.FOV end
     else
-        -- Revert to default FOV if it was previously overridden by the script
         if Camera.FieldOfView == States.FOV and Camera.FieldOfView ~= 70 then
             Camera.FieldOfView = 70
         end
@@ -853,143 +1022,6 @@ Connections.MainLoop = RunService.RenderStepped:Connect(function()
         if target then
             local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, target.Position)
             Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, States.AimbotSmoothness)
-        end
-    end
-
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        local rootPart = char:FindFirstChild("HumanoidRootPart")
-
-        -- Configurable Player Stats Toggles
-        if hum then
-            -- Store default values when a new character spawns
-            if originalStats.Character ~= char then
-                originalStats.Character = char
-                originalStats.WalkSpeed = hum.WalkSpeed
-                originalStats.JumpPower = hum.JumpPower
-                originalStats.UseJumpPower = hum.UseJumpPower
-            end
-
-            if States.WalkSpeedToggle then
-                hum.WalkSpeed = States.WalkSpeed
-            else
-                -- Revert to original WalkSpeed if it was previously overridden by the script
-                if hum.WalkSpeed == States.WalkSpeed and hum.WalkSpeed ~= originalStats.WalkSpeed then
-                    hum.WalkSpeed = originalStats.WalkSpeed
-                end
-            end
-
-            if States.JumpPowerToggle then
-                hum.JumpPower = States.JumpPower
-                hum.UseJumpPower = true
-            else
-                -- Revert to original JumpPower if it was previously overridden by the script
-                if hum.JumpPower == States.JumpPower and hum.JumpPower ~= originalStats.JumpPower then
-                    hum.JumpPower = originalStats.JumpPower
-                    hum.UseJumpPower = originalStats.UseJumpPower
-                end
-            end
-        end
-
-        -- Safewalk
-        if States.Safewalk and rootPart and hum then
-            if hum.FloorMaterial ~= Enum.Material.Air and hum.MoveDirection.Magnitude > 0 then
-                local rayParams = RaycastParams.new()
-                rayParams.FilterDescendantsInstances = {char}
-                rayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-                -- Raycast ahead based on velocity
-                local rayOrigin = rootPart.Position + (hum.MoveDirection * 3)
-                local hit = workspace:Raycast(rayOrigin, Vector3.new(0, -10, 0), rayParams)
-
-                if not hit then
-                    -- Zero out velocity if there is no floor detected ahead
-                    rootPart.Velocity = Vector3.new(0, rootPart.Velocity.Y, 0)
-                end
-            end
-        end
-
-        -- Noclip
-        if States.Noclip then
-            for _, part in pairs(char:GetDescendants()) do
-                if part:IsA("BasePart") and part.CanCollide then
-                    part.CanCollide = false
-                end
-            end
-        end
-
-        -- Fly
-        if States.Fly and rootPart and hum then
-            if not flyBodyVelocity then
-                flyBodyVelocity = Instance.new("BodyVelocity")
-                flyBodyVelocity.Name = "FlyBodyVelocity"
-                flyBodyVelocity.MaxForce = Vector3.new(100000, 100000, 100000)
-                flyBodyVelocity.Parent = rootPart
-            end
-
-            local moveDir = Vector3.new(0, 0, 0)
-            if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
-            if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
-            if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - Camera.CFrame.RightVector end
-            if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + Camera.CFrame.RightVector end
-            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0, 1, 0) end
-            if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir = moveDir - Vector3.new(0, 1, 0) end
-
-            if moveDir.Magnitude > 0 then moveDir = moveDir.Unit end
-            flyBodyVelocity.Velocity = moveDir * States.FlySpeed
-            hum.PlatformStand = true
-        else
-            if flyBodyVelocity then
-                flyBodyVelocity:Destroy()
-                flyBodyVelocity = nil
-            end
-            if hum and not States.Fly then hum.PlatformStand = false end
-        end
-
-        -- Spinbot / Fling
-        if States.Spinbot and rootPart then
-            local spinObj = rootPart:FindFirstChild("SpinbotVelocity")
-            if not spinObj then
-                spinObj = Instance.new("BodyAngularVelocity")
-                spinObj.Name = "SpinbotVelocity"
-                spinObj.MaxTorque = Vector3.new(0, math.huge, 0)
-                spinObj.AngularVelocity = Vector3.new(0, 150, 0)
-                spinObj.Parent = rootPart
-            end
-        else
-            local spinObj = rootPart and rootPart:FindFirstChild("SpinbotVelocity")
-            if spinObj then spinObj:Destroy() end
-        end
-
-        -- Anti-Aim
-        if States.AntiAim and rootPart and hum then
-            hum.AutoRotate = false
-            -- Jitter root CFrame
-            rootPart.CFrame = rootPart.CFrame * CFrame.Angles(0, math.rad(math.random(-90, 90)), 0)
-        else
-            if hum and not States.Spinbot and not States.AntiAim then
-                hum.AutoRotate = true
-            end
-        end
-
-        -- Hitbox Expander
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                local hrp = player.Character.HumanoidRootPart
-                if not originalSizes[player.Name] then
-                    originalSizes[player.Name] = hrp.Size
-                end
-
-                if States.HitboxExpander then
-                    hrp.Size = Vector3.new(States.HitboxSize, States.HitboxSize, States.HitboxSize)
-                    hrp.Transparency = 0.5
-                    hrp.CanCollide = false
-                else
-                    hrp.Size = originalSizes[player.Name]
-                    hrp.Transparency = 1
-                end
-            end
         end
     end
 end)
@@ -1065,7 +1097,6 @@ end)
 
 local tabConfig = createTab("Config")
 tabConfig.CreateSection("Configuration")
--- Auto Reattach Toggle added below
 tabConfig.CreateToggle("Auto Reattach on Rejoin", "AutoReattach")
 tabConfig.CreateButton("Save Current Settings", Color3.fromRGB(50, 100, 150), SaveConfig)
 tabConfig.CreateButton("Load Saved Settings", Color3.fromRGB(50, 100, 150), LoadConfig)
@@ -1152,7 +1183,6 @@ local function DestroyScript()
         if hum then
             hum.PlatformStand = false
             hum.AutoRotate = true
-            -- Restore defaults safely
             if originalStats.Character == char then
                 hum.WalkSpeed = originalStats.WalkSpeed
                 hum.JumpPower = originalStats.JumpPower
