@@ -1,4 +1,4 @@
-# Minimal Hub v1
+# Minimal Hub
 
 A lightweight, performance-optimized utility and hub script for Roblox. Minimal Hub focuses on providing essential features like ESP, Aimbot, and Player modifications with a clean, unobtrusive user interface. The script separates visual rendering from physics loops to eliminate game stuttering.
 
@@ -56,11 +56,14 @@ A lightweight, performance-optimized utility and hub script for Roblox. Minimal 
 
 ## 📖 Usage / Installation
 
-1. Copy the script code.
+1. Copy the loadstring script.
+   ```lua
+   loadstring(game:HttpGet("https://raw.githubusercontent.com/Wakype/NamelessHub/main/MinimalHub.lua"))()
+   ```
 2. Launch a Roblox game.
 3. Open your preferred Roblox executor.
-   * *Note: For all features to work, your executor must support the `Drawing` API, `writefile/readfile`, and `queue_on_teleport` (e.g., Synapse, Krnl, Fluxus).*
-4. Paste the script into the executor and hit **Execute**.
+   * *Note: For all features to work, your executor must support the `Drawing` API, `writefile/readfile`, and `queue_on_teleport` (e.g., Synapse, Krnl, Fluxus, Solara, Xeno, etc).*
+4. Paste the loadstring script into the executor and hit **Execute**.
 5. The UI will pop up automatically. Press `Right Control` to hide or show it.
 
 ---
