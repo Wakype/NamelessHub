@@ -58,7 +58,7 @@ A lightweight, performance-optimized utility and hub script for Roblox. Minimal 
 
 1. Copy the loadstring script.
    ```lua
-   loadstring(game:HttpGet("https://raw.githubusercontent.com/Wakype/NamelessHub/main/MinimalHub.lua"))()
+   loadstring(game:HttpGet("https://raw.githubusercontent.com/Wakype/MinimaHub/main/MinimalHub.lua"))()
    ```
 2. Launch a Roblox game.
 3. Open your preferred Roblox executor.
