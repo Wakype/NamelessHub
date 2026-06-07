@@ -1,4 +1,4 @@
-# Minimal Hub
+# MinimaHub
 
 A lightweight, performance-optimized utility and hub script for Roblox. Minimal Hub focuses on providing essential features like ESP, Aimbot, and Player modifications with a clean, unobtrusive user interface. The script separates visual rendering from physics loops to eliminate game stuttering.
 
